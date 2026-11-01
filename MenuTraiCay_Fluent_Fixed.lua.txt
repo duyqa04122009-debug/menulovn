@@ -1,0 +1,1153 @@
+-- ============================================================
+-- Menu Trai Cây | Blox Fruits — Fluent UI (Delta Android)
+-- Tabs: Auto Farm | Dịch chuyển | Cài đặt
+-- Sửa: nút × chỉ ẩn menu, nút MENU flottant để mở lại.
+-- ============================================================
+
+local Players = game:GetService('Players')
+local HttpService = game:GetService('HttpService')
+local TeleportService = game:GetService('TeleportService')
+local UserInputService = game:GetService('UserInputService')
+local RunService = game:GetService('RunService')
+local ReplicatedStorage = game:GetService('ReplicatedStorage')
+local Workspace = game:GetService('Workspace')
+
+local player = Players.LocalPlayer
+local ENV = (getgenv and getgenv()) or _G
+if ENV.TraiCayCleanup then pcall(ENV.TraiCayCleanup) end
+
+local connections, alive = {}, true
+local panelHidden = false
+
+local function safeConnect(signal, fn)
+    local ok, c = pcall(function()
+        return signal:Connect(function(...)
+            local ok2, err2 = pcall(fn, ...)
+            if not ok2 then
+                note('Lỗi sự kiện: ' .. tostring(err2))
+            end
+        end)
+    end)
+    if ok and c then table.insert(connections, c) end
+    return c
+end
+
+local function connect(signal, fn)
+    return safeConnect(signal, fn)
+end
+
+-- ===================== CẤU HÌNH =====================
+local configFile = 'TraiCayFluentConfig.json'
+local config = {
+    AutoFarm = false,
+    AutoQuest = false,
+    AutoKill = false,
+    AutoFruit = false,
+    TeleportOnSelect = true,
+    AntiAFK = false,
+    WatchAdmins = false,
+    Reload = false,
+    TestMode = true,
+    SourceURL = '',
+    AdminIds = {},
+    SelectedSea = 1,
+}
+if readfile and isfile and isfile(configFile) then
+    local ok, saved = pcall(function() return HttpService:JSONDecode(readfile(configFile)) end)
+    if ok and type(saved) == 'table' then
+        for k, v in pairs(saved) do
+            if config[k] ~= nil then config[k] = v end
+        end
+    end
+end
+local function saveConfig()
+    if writefile then
+        pcall(function() writefile(configFile, HttpService:JSONEncode(config)) end)
+    end
+end
+
+-- Remote cấu hình
+local RemoteConfig = {
+    CommName = '',
+    QuestFunction = 'StartQuest',
+}
+
+local function GetCommRemote()
+    if RemoteConfig.CommName and RemoteConfig.CommName ~= '' then
+        local r = ReplicatedStorage:FindFirstChild(RemoteConfig.CommName, true)
+        if r then return r end
+    end
+    local remotes = ReplicatedStorage:FindFirstChild('Remotes')
+    if remotes then
+        local cf = remotes:FindFirstChild('CommF_')
+        if cf then return cf end
+        local ce = remotes:FindFirstChild('CommE')
+        if ce then return ce end
+    end
+    return nil
+end
+
+-- ===================== PALETTE FLUENT UI =====================
+local Theme = {
+    Background = Color3.fromRGB(28, 28, 32),
+    Surface = Color3.fromRGB(38, 38, 42),
+    SurfaceLight = Color3.fromRGB(46, 46, 50),
+    Border = Color3.fromRGB(56, 56, 62),
+    Text = Color3.fromRGB(235, 235, 240),
+    TextMuted = Color3.fromRGB(158, 158, 168),
+    Accent = Color3.fromRGB(0, 120, 215),
+    AccentHover = Color3.fromRGB(20, 140, 235),
+    Success = Color3.fromRGB(16, 185, 129),
+    Danger = Color3.fromRGB(220, 53, 69),
+    Sea1 = Color3.fromRGB(0, 120, 215),
+    Sea2 = Color3.fromRGB(16, 185, 129),
+    Sea3 = Color3.fromRGB(230, 160, 20),
+}
+
+-- ===================== TIỆN ÍCH TẠO ĐỐI TƯỢNG =====================
+local function New(className, properties, parent)
+    local inst = Instance.new(className)
+    for k, v in pairs(properties or {}) do
+        inst[k] = v
+    end
+    if parent then inst.Parent = parent end
+    return inst
+end
+
+local function Corner(radius, parent)
+    local c = New('UICorner', { CornerRadius = UDim.new(0, radius or 8) }, parent)
+    return c
+end
+
+local function Stroke(color, thickness, parent)
+    local s = New('UIStroke', {
+        Color = color or Theme.Border,
+        Thickness = thickness or 1,
+        ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+    }, parent)
+    return s
+end
+
+-- ===================== GUI CHÍNH =====================
+local gui = Instance.new('ScreenGui')
+gui.Name = 'TraiCayFluent'
+gui.ResetOnSpawn = false
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+local attached = pcall(function()
+    gui.Parent = (gethui and gethui()) or game:GetService('CoreGui')
+end)
+if not attached then
+    gui.Parent = player:WaitForChild('PlayerGui')
+end
+
+-- Nền mờ (luôn có, chỉ ẩn khi panel ẩn)
+local backdrop = New('ImageLabel', {
+    Name = 'Backdrop',
+    Parent = gui,
+    BackgroundTransparency = 1,
+    Position = UDim2.new(0.5, -330, 0.5, -260),
+    Size = UDim2.fromOffset(660, 520),
+    Image = 'rbxassetid://5568430621',
+    ImageColor3 = Color3.fromRGB(0, 0, 0),
+    ImageTransparency = 0.62,
+    ScaleType = Enum.ScaleType.Tile,
+    TileSize = UDim2.new(0, 120, 0, 120),
+})
+
+-- Container chính
+local container = New('Frame', {
+    Name = 'Container',
+    Parent = gui,
+    Position = UDim2.new(0.5, -300, 0.5, -220),
+    Size = UDim2.fromOffset(620, 480),
+    BackgroundColor3 = Theme.Background,
+    BorderSizePixel = 0,
+    ClipsDescendants = true,
+    Visible = true,
+})
+Corner(12, container)
+Stroke(Theme.Border, 1.4, container)
+
+-- Top bar
+local topBar = New('Frame', {
+    Name = 'TopBar',
+    Parent = container,
+    Size = UDim2.new(1, 0, 0, 40),
+    BackgroundTransparency = 1,
+})
+Corner(10, topBar)
+
+local appTitle = New('TextLabel', {
+    Name = 'AppTitle',
+    Parent = topBar,
+    Position = UDim2.new(0, 14, 0, 0),
+    Size = UDim2.new(0, 240, 1, 0),
+    BackgroundTransparency = 1,
+    Font = Enum.Font.GothamBold,
+    Text = 'TRÁI CÂY • FLUENT',
+    TextColor3 = Theme.Text,
+    TextSize = 15,
+    TextXAlignment = Enum.TextXAlignment.Left,
+})
+
+local statusPill = New('Frame', {
+    Name = 'StatusPill',
+    Parent = topBar,
+    Position = UDim2.new(1, -170, 0.5, -10),
+    Size = UDim2.new(0, 160, 0, 20),
+    BackgroundColor3 = Theme.Surface,
+    BorderSizePixel = 0,
+})
+Corner(10, statusPill)
+Stroke(Theme.Border, 1, statusPill)
+
+local statusText = New('TextLabel', {
+    Name = 'StatusText',
+    Parent = statusPill,
+    Size = UDim2.new(1, -6, 1, 0),
+    Position = UDim2.new(0, 6, 0, 0),
+    BackgroundTransparency = 1,
+    Font = Enum.Font.Gotham,
+    Text = 'Sẵn sàng',
+    TextColor3 = Theme.TextMuted,
+    TextSize = 12,
+    TextXAlignment = Enum.TextXAlignment.Left,
+})
+
+local function note(text)
+    if alive then
+        pcall(function() statusText.Text = tostring(text) end)
+    end
+end
+
+-- Nút điều khiển cửa sổ (trong topBar)
+local function makeWindowButton(name, x, color, text)
+    return New('TextButton', {
+        Name = name,
+        Parent = topBar,
+        Position = UDim2.new(0, x, 0, 8),
+        Size = UDim2.fromOffset(24, 24),
+        BackgroundColor3 = color,
+        Text = text,
+        TextColor3 = Color3.new(1, 1, 1),
+        Font = Enum.Font.GothamBold,
+        TextSize = 14,
+        BorderSizePixel = 0,
+        AutoButtonColor = false,
+    })
+end
+
+local btnMin = makeWindowButton('BtnMin', 572, Theme.SurfaceLight, '–')
+Corner(8, btnMin)
+local btnClose = makeWindowButton('BtnClose', 600, Theme.Danger, '×')
+Corner(8, btnClose)
+
+-- Nút MENU flottant (luôn hiện khi panel bị ẩn)
+local btnMini = New('TextButton', {
+    Name = 'BtnMini',
+    Parent = gui,
+    Position = UDim2.new(0, 12, 0.5, -19),
+    Size = UDim2.fromOffset(56, 38),
+    BackgroundColor3 = Theme.Accent,
+    Text = 'MENU',
+    TextColor3 = Color3.new(1, 1, 1),
+    Font = Enum.Font.GothamBold,
+    TextSize = 14,
+    BorderSizePixel = 0,
+    Visible = false,
+})
+Corner(12, btnMini)
+Stroke(Theme.Border, 1, btnMini)
+
+-- Sidebar
+local sidebar = New('Frame', {
+    Name = 'Sidebar',
+    Parent = container,
+    Position = UDim2.new(0, 0, 0, 40),
+    Size = UDim2.new(0, 160, 1, -40),
+    BackgroundColor3 = Theme.Surface,
+    BorderSizePixel = 0,
+})
+Stroke(Theme.Border, 1, sidebar)
+
+local tabButtons = {}
+local function makeTabButton(name, text, y)
+    return New('TextButton', {
+        Name = name,
+        Parent = sidebar,
+        Position = UDim2.new(0, 12, 0, y),
+        Size = UDim2.new(0, 136, 0, 38),
+        BackgroundColor3 = Theme.Background,
+        Text = text,
+        TextColor3 = Theme.TextMuted,
+        Font = Enum.Font.Gotham,
+        TextSize = 13,
+        BorderSizePixel = 0,
+        AutoButtonColor = false,
+    })
+end
+
+local content = New('Frame', {
+    Name = 'Content',
+    Parent = container,
+    Position = UDim2.new(0, 172, 0, 40),
+    Size = UDim2.new(1, -172, 1, -40),
+    BackgroundTransparency = 1,
+})
+
+local pages = {}
+local function makePage(name)
+    local p = New('Frame', {
+        Name = name,
+        Parent = content,
+        Size = UDim2.fromScale(1, 1),
+        BackgroundTransparency = 1,
+        Visible = false,
+    })
+    pages[name] = p
+    return p
+end
+
+local pageAutoFarm = makePage('AutoFarm')
+local pageTeleport = makePage('Teleport')
+local pageSettings = makePage('Settings')
+
+local activeTab = nil
+local function setTab(name)
+    if activeTab == name then return end
+    if activeTab and tabButtons[activeTab] then
+        local b = tabButtons[activeTab]
+        b.BackgroundColor3 = Theme.Background
+        b.TextColor3 = Theme.TextMuted
+        local s = b:FindFirstChildOfClass('UIStroke')
+        if s then s.Color = Theme.Border end
+    end
+    activeTab = name
+    for _, p in pairs(pages) do p.Visible = false end
+    local page = pages[name]
+    if page then page.Visible = true end
+    local b = tabButtons[name]
+    if b then
+        b.BackgroundColor3 = Theme.Accent
+        b.TextColor3 = Color3.new(1, 1, 1)
+        local s = b:FindFirstChildOfClass('UIStroke')
+        if s then s.Color = Theme.Accent end
+    end
+end
+
+for _, data in ipairs({
+    {name = 'AutoFarm', text = 'Auto Farm', y = 16},
+    {name = 'Teleport', text = 'Dịch chuyển', y = 64},
+    {name = 'Settings', text = 'Cài đặt', y = 112},
+}) do
+    local b = makeTabButton('Tab_' .. data.name, data.text, data.y)
+    Corner(8, b)
+    Stroke(Theme.Border, 1, b)
+    tabButtons[data.name] = b
+    connect(b.MouseButton1Click, function() setTab(data.name) end)
+end
+
+-- ===================== TIỆN ÍCH TRANG =====================
+local function sectionLabel(parent, text, y, width)
+    return New('TextLabel', {
+        Parent = parent,
+        Position = UDim2.new(0, 16, 0, y),
+        Size = UDim2.new(0, width or 360, 0, 20),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.GothamBold,
+        Text = text,
+        TextColor3 = Theme.TextMuted,
+        TextSize = 13,
+        TextXAlignment = Enum.TextXAlignment.Left,
+    })
+end
+
+local function toggleCard(parent, text, y, key, height)
+    height = height or 44
+    local card = New('Frame', {
+        Parent = parent,
+        Position = UDim2.new(0, 16, 0, y),
+        Size = UDim2.new(0, 408, 0, height),
+        BackgroundColor3 = Theme.Surface,
+        BorderSizePixel = 0,
+    })
+    Corner(10, card)
+    Stroke(Theme.Border, 1, card)
+
+    New('TextLabel', {
+        Parent = card,
+        Position = UDim2.new(0, 14, 0, 8),
+        Size = UDim2.new(1, -80, 0, 20),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.Gotham,
+        Text = text,
+        TextColor3 = Theme.Text,
+        TextSize = 14,
+        TextXAlignment = Enum.TextXAlignment.Left,
+    })
+
+    local toggle = New('TextButton', {
+        Parent = card,
+        Position = UDim2.new(1, -46, 0.5, -12),
+        Size = UDim2.fromOffset(44, 24),
+        BackgroundColor3 = config[key] and Theme.Accent or Theme.Border,
+        Text = '',
+        BorderSizePixel = 0,
+        AutoButtonColor = false,
+    })
+    Corner(12, toggle)
+    local knob = New('Frame', {
+        Parent = toggle,
+        Size = UDim2.new(0, 18, 0, 18),
+        Position = config[key] and UDim2.new(1, -20, 0, 3) or UDim2.new(0, 3, 0, 3),
+        BackgroundColor3 = Color3.new(1, 1, 1),
+        BorderSizePixel = 0,
+    })
+    Corner(12, knob)
+
+    local state = config[key]
+    local function paint()
+        toggle.BackgroundColor3 = state and Theme.Accent or Theme.Border
+        knob.Position = state and UDim2.new(1, -20, 0, 3) or UDim2.new(0, 3, 0, 3)
+    end
+    paint()
+
+    connect(toggle.MouseButton1Click, function()
+        state = not state
+        config[key] = state
+        saveConfig()
+        paint()
+        note(text .. ': ' .. (state and 'BẬT' or 'TẮT'))
+    end)
+    return card
+end
+
+local function statusBox(parent, y, height)
+    height = height or 100
+    local card = New('Frame', {
+        Parent = parent,
+        Position = UDim2.new(0, 16, 0, y),
+        Size = UDim2.new(0, 408, 0, height),
+        BackgroundColor3 = Theme.Surface,
+        BorderSizePixel = 0,
+    })
+    Corner(10, card)
+    Stroke(Theme.Border, 1, card)
+
+    New('TextLabel', {
+        Parent = card,
+        Position = UDim2.new(0, 12, 0, 8),
+        Size = UDim2.new(1, -24, 0, 18),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.GothamBold,
+        Text = 'NHẤT NGỮ / TRẠNG THÁI',
+        TextColor3 = Theme.TextMuted,
+        TextSize = 12,
+        TextXAlignment = Enum.TextXAlignment.Left,
+    })
+
+    local list = New('ScrollingFrame', {
+        Parent = card,
+        Position = UDim2.new(0, 8, 0, 28),
+        Size = UDim2.new(1, -16, 1, -36),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        AutomaticCanvasSize = Enum.AutomaticSize.Y,
+        CanvasSize = UDim2.new(),
+        ScrollBarThickness = 4,
+        ScrollBarImageColor3 = Theme.Border,
+    })
+    local layout = New('UIListLayout', {
+        Parent = list,
+        Padding = UDim.new(0, 5),
+        SortOrder = Enum.SortOrder.LayoutOrder,
+    })
+
+    local msgs = {}
+    local function log(text)
+        table.insert(msgs, text)
+        if #msgs > 18 then table.remove(msgs, 1) end
+        for _, c in ipairs(list:GetChildren()) do
+            if c:IsA('TextLabel') then c:Destroy() end
+        end
+        local tl = New('TextLabel', {
+            Parent = list,
+            Size = UDim2.new(1, 0, 0, math.max(16, 14 * #msgs)),
+            BackgroundTransparency = 1,
+            Font = Enum.Font.Gotham,
+            Text = table.concat(msgs, '\n'),
+            TextColor3 = Theme.Text,
+            TextSize = 13,
+            TextWrapped = true,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            TextYAlignment = Enum.TextYAlignment.Top,
+            LayoutOrder = #msgs,
+        })
+    end
+    return log
+end
+
+local function actionButton(parent, text, y, width, height, color)
+    height = height or 36
+    color = color or Theme.Accent
+    local b = New('TextButton', {
+        Parent = parent,
+        Position = UDim2.new(0, 16, 0, y),
+        Size = UDim2.new(0, width or 180, 0, height),
+        BackgroundColor3 = color,
+        Text = text,
+        TextColor3 = Color3.new(1, 1, 1),
+        Font = Enum.Font.GothamBold,
+        TextSize = 14,
+        BorderSizePixel = 0,
+        AutoButtonColor = false,
+    })
+    Corner(10, b)
+    connect(b.MouseEnter, function() b.BackgroundColor3 = Theme.AccentHover end)
+    connect(b.MouseLeave, function() b.BackgroundColor3 = color end)
+    return b
+end
+
+local function seaSectionLabel(parent, text, y, color)
+    return New('TextLabel', {
+        Parent = parent,
+        Position = UDim2.new(0, 8, 0, y),
+        Size = UDim2.new(1, -16, 0, 20),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.GothamBold,
+        Text = text,
+        TextColor3 = color or Theme.Text,
+        TextSize = 13,
+        TextXAlignment = Enum.TextXAlignment.Left,
+    })
+end
+
+local function teleportRow(parent, name, levelRange, coords, cf, seaColor)
+    local card = New('Frame', {
+        Parent = parent,
+        Size = UDim2.new(1, -8, 0, 44),
+        BackgroundColor3 = Theme.Surface,
+        BorderSizePixel = 0,
+        LayoutOrder = #parent:GetChildren(),
+    })
+    Corner(8, card)
+    Stroke(Theme.Border, 1, card)
+
+    New('TextLabel', {
+        Parent = card,
+        Position = UDim2.new(0, 10, 0, 5),
+        Size = UDim2.new(0, 150, 0, 18),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.GothamBold,
+        Text = name,
+        TextColor3 = Theme.Text,
+        TextSize = 14,
+        TextXAlignment = Enum.TextXAlignment.Left,
+    })
+    New('TextLabel', {
+        Parent = card,
+        Position = UDim2.new(0, 10, 0, 23),
+        Size = UDim2.new(0, 150, 0, 16),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.Gotham,
+        Text = levelRange,
+        TextColor3 = Theme.TextMuted,
+        TextSize = 12,
+        TextXAlignment = Enum.TextXAlignment.Left,
+    })
+    New('TextLabel', {
+        Parent = card,
+        Position = UDim2.new(0, 170, 0, 12),
+        Size = UDim2.new(0, 140, 0, 20),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.Gotham,
+        Text = coords,
+        TextColor3 = Theme.TextMuted,
+        TextSize = 11,
+        TextXAlignment = Enum.TextXAlignment.Left,
+    })
+    local btn = New('TextButton', {
+        Parent = card,
+        Position = UDim2.new(1, -70, 0.5, -13),
+        Size = UDim2.fromOffset(60, 26),
+        BackgroundColor3 = seaColor or Theme.Accent,
+        Text = 'Đi',
+        TextColor3 = Color3.new(1, 1, 1),
+        Font = Enum.Font.GothamBold,
+        TextSize = 13,
+        BorderSizePixel = 0,
+        AutoButtonColor = false,
+    })
+    Corner(8, btn)
+    connect(btn.MouseEnter, function() btn.BackgroundColor3 = Theme.AccentHover end)
+    connect(btn.MouseLeave, function() btn.BackgroundColor3 = seaColor or Theme.Accent end)
+    connect(btn.MouseButton1Click, function()
+        note('Đang dịch chuyển đến ' .. name .. '...')
+        TeleportToCF(cf)
+    end)
+    return card
+end
+
+-- ===================== LOGIC GAME =====================
+local function GetCharacter() return player.Character end
+local function GetHRP()
+    local char = GetCharacter()
+    if char then return char:FindFirstChild('HumanoidRootPart') end
+    return nil
+end
+local function GetHumanoid()
+    local char = GetCharacter()
+    if char then return char:FindFirstChildOfClass('Humanoid') end
+    return nil
+end
+
+local function GetLevel()
+    local ls = player:FindFirstChild('leaderstats')
+    if ls then
+        local l = ls:FindFirstChild('Level')
+        if l and l:IsA('ValueBase') then return tonumber(l.Value) or 1 end
+    end
+    local data = player:FindFirstChild('Data')
+    if data then
+        local l = data:FindFirstChild('Level')
+        if l then return tonumber(l.Value) or 1 end
+    end
+    return 1
+end
+
+local noclipConn = nil
+local function EnableNoclip(enable)
+    if enable then
+        if noclipConn then return end
+        noclipConn = connect(RunService.Stepped, function()
+            if not alive then return end
+            local char = GetCharacter()
+            if char then
+                for _, obj in ipairs(char:GetDescendants()) do
+                    if obj:IsA('BasePart') then obj.CanCollide = false end
+                end
+            end
+        end)
+    else
+        if noclipConn then
+            noclipConn:Disconnect()
+            noclipConn = nil
+        end
+        local char = GetCharacter()
+        if char then
+            for _, obj in ipairs(char:GetDescendants()) do
+                if obj:IsA('BasePart') then obj.CanCollide = true end
+            end
+        end
+    end
+end
+
+local function TeleportToCF(cf)
+    EnableNoclip(true)
+    local hrp = GetHRP()
+    if not hrp then
+        note('Không tìm thấy nhân vật để dịch chuyển.')
+        EnableNoclip(false)
+        return
+    end
+    if config.TestMode then
+        note('[TEST] Dịch chuyển đến ' .. tostring(cf.Position))
+        wait(0.5)
+        EnableNoclip(false)
+        return
+    end
+    local start = hrp.CFrame
+    local elapsed = 0
+    local duration = 0.8
+    while elapsed < duration and alive do
+        wait(0.03)
+        elapsed = elapsed + 0.03
+        local a = math.min(elapsed / duration, 1)
+        hrp.CFrame = start:Lerp(cf, a)
+    end
+    hrp.CFrame = cf
+    EnableNoclip(false)
+    note('Đã đến đích.')
+end
+
+-- ===================== TOÀ ĐỘ 3 SEA =====================
+local Sea1 = {
+    {name = 'Starter Island (Marine)', level = '1–5', coords = '(-2566, 7, 2043)', cf = CFrame.new(-2566.42, 6.85, 2043.19), color = Theme.Sea1},
+    {name = 'Starter Island (Pirate)', level = '1–5', coords = '(1039, 16, 1417)', cf = CFrame.new(1038.56, 16.27, 1416.71), color = Theme.Sea1},
+    {name = 'Jungle (Đảo Rừng)', level = '15–29', coords = '(-1246, 12, 317)', cf = CFrame.new(-1246.38, 11.85, 317.15), color = Theme.Sea1},
+    {name = 'Pirate Village (Làng Hải Tặc)', level = '10–14', coords = '(-1122, 5, 3855)', cf = CFrame.new(-1122.31, 4.75, 3855.16), color = Theme.Sea1},
+    {name = 'Desert (Sa Mạc)', level = '30–39', coords = '(894, 6, 4368)', cf = CFrame.new(894.12, 6.35, 4368.12), color = Theme.Sea1},
+    {name = 'Middle Island (Đảo Giữa)', level = '—', coords = '(-25, 7, 256)', cf = CFrame.new(-24.51, 6.85, 256.32), color = Theme.Sea1},
+    {name = 'Frozen Village (Làng Tuyết)', level = '40–49', coords = '(1185, 27, -1212)', cf = CFrame.new(1185.35, 26.75, -1212.44), color = Theme.Sea1},
+    {name = 'Marine Fortress (Pháo Đài)', level = '50–59', coords = '(-4512, 20, 4016)', cf = CFrame.new(-4512.21, 20.35, 4015.65), color = Theme.Sea1},
+    {name = 'Skylands (Đảo Trên Trời Cũ)', level = '60–69', coords = '(-1612, 368, -2202)', cf = CFrame.new(-1612.32, 368.15, -2202.12), color = Theme.Sea1},
+    {name = 'Prison (Nhà Tù)', level = '—', coords = '(4812, 6, 715)', cf = CFrame.new(4812.35, 5.65, 715.42), color = Theme.Sea1},
+    {name = 'Colosseum (Đấu Trường)', level = '—', coords = '(-1512, 7, -2812)', cf = CFrame.new(-1512.45, 7.25, -2812.15), color = Theme.Sea1},
+    {name = 'Magma Village (Đảo Núi Lửa)', level = '—', coords = '(-5212, 8, 8415)', cf = CFrame.new(-5212.32, 8.45, 8415.12), color = Theme.Sea1},
+    {name = 'Underwater City (Đảo Người Cá)', level = '—', coords = '(3813, -12, -3412)', cf = CFrame.new(3812.65, -12.45, -3412.32), color = Theme.Sea1},
+    {name = 'Fountain City (Thành Phố Suối Nguồn)', level = '—', coords = '(5115, 16, 4112)', cf = CFrame.new(5115.12, 15.65, 4112.45), color = Theme.Sea1},
+}
+
+local Sea2 = {
+    {name = 'Kingdom of Rose (Vương Quốc Hoa)', level = '700–724', coords = '(-425, 72, 1812)', cf = CFrame.new(-425.12, 72.45, 1812.35), color = Theme.Sea2},
+    {name = 'Cafe (Quán Cà Phê)', level = '—', coords = '(-380, 73, 295)', cf = CFrame.new(-380.12, 73.15, 295.42), color = Theme.Sea2},
+    {name = 'Green Zone (Vùng Xanh)', level = '—', coords = '(-2115, 72, -2515)', cf = CFrame.new(-2115.42, 71.85, -2515.12), color = Theme.Sea2},
+    {name = 'Graveyard (Nghĩa Trang)', level = '—', coords = '(-2815, 7, -31)', cf = CFrame.new(-2815.12, 6.85, -31.42), color = Theme.Sea2},
+    {name = 'Snow Mountain (Núi Tuyết)', level = '—', coords = '(912, 402, -1215)', cf = CFrame.new(912.45, 402.15, -1215.35), color = Theme.Sea2},
+    {name = 'Hot and Cold (Đảo Lửa Băng)', level = '—', coords = '(-5122, 15, -5012)', cf = CFrame.new(-5122.35, 15.42, -5012.15), color = Theme.Sea2},
+    {name = 'Cursed Ship (Tàu Ma)', level = '—', coords = '(913, 125, 33112)', cf = CFrame.new(912.65, 125.32, 33112.45), color = Theme.Sea2},
+    {name = 'Ice Castle (Lâu Đài Băng)', level = '—', coords = '(6115, 403, -1012)', cf = CFrame.new(6115.12, 402.65, -1012.35), color = Theme.Sea2},
+    {name = 'Forgotten Island (Đảo Quên Lãng)', level = '—', coords = '(-3012, 16, -10115)', cf = CFrame.new(-3012.45, 15.85, -10115.12), color = Theme.Sea2},
+    {name = 'Dark Arena (Nơi Gọi Râu Đen)', level = '—', coords = '(3812, 16, -3812)', cf = CFrame.new(3812.45, 15.65, -3812.12), color = Theme.Sea2},
+}
+
+local Sea3 = {
+    {name = 'Port Town (Thị Trấn Cảng)', level = '1500–1524', coords = '(-2812, 15, 5312)', cf = CFrame.new(-2812.35, 15.45, 5312.12), color = Theme.Sea3},
+    {name = 'Hydra Island (Đảo Nữ Nhi)', level = '1550–1574', coords = '(5212, 1012, 15)', cf = CFrame.new(5212.12, 1012.35, 15.42), color = Theme.Sea3},
+    {name = 'Great Tree (Cây Đại Thụ)', level = '—', coords = '(2115, 16, -4012)', cf = CFrame.new(2115.45, 15.65, -4012.32), color = Theme.Sea3},
+    {name = 'Floating Turtle (Đảo Rùa Nổi)', level = '—', coords = '(-10112, 412, -1012)', cf = CFrame.new(-10112.45, 412.32, -1012.12), color = Theme.Sea3},
+    {name = 'Castle on the Sea (Lâu Đài Trên Biển)', level = '—', coords = '(-5012, 315, -5012)', cf = CFrame.new(-5012.15, 315.45, -5012.32), color = Theme.Sea3},
+    {name = 'Haunted Castle (Lâu Đài Ma Ám)', level = '—', coords = '(-9512, 142, 5512)', cf = CFrame.new(-9512.35, 142.15, 5512.42), color = Theme.Sea3},
+    {name = 'Sea of Treats (Đảo Bánh Ngọt)', level = '—', coords = '(-2012, 50, -14512)', cf = CFrame.new(-2012.42, 50.32, -14512.15), color = Theme.Sea3},
+    {name = 'Tiki Outpost', level = '—', coords = '(-15212, 20, 12)', cf = CFrame.new(-15212.45, 20.15, 12.32), color = Theme.Sea3},
+}
+
+-- ===================== NHIỆM VỤ THEO CẤP ĐỘ =====================
+local Quests = {
+    {min = 1,   max = 9,  sea = 1, npc = 'Pirate Quest', island = 'Pirate Village (Làng Hải Tặc)', enemy = 'Bandit',      cf = CFrame.new(-1122.31, 4.75, 3855.16)},
+    {min = 10,  max = 14, sea = 1, npc = 'Jungle Quest', island = 'Jungle (Đảo Rừng)', enemy = 'Monkey',              cf = CFrame.new(-1246.38, 11.85, 317.15)},
+    {min = 15,  max = 29, sea = 1, npc = 'Jungle Quest', island = 'Jungle (Đảo Rừng)', enemy = 'Monkey',              cf = CFrame.new(-1246.38, 11.85, 317.15)},
+    {min = 30,  max = 39, sea = 1, npc = 'Desert Quest', island = 'Desert (Sa Mạc)', enemy = 'Desert Bandit',         cf = CFrame.new(894.12, 6.35, 4368.12)},
+    {min = 40,  max = 49, sea = 1, npc = 'Frozen Quest', island = 'Frozen Village (Làng Tuyết)', enemy = 'Ice Warrior', cf = CFrame.new(1185.35, 26.75, -1212.44)},
+    {min = 50,  max = 59, sea = 1, npc = 'Marine Quest', island = 'Marine Fortress (Pháo Đài)', enemy = 'Marine Soldier', cf = CFrame.new(-4512.21, 20.35, 4015.65)},
+    {min = 60,  max = 69, sea = 1, npc = 'Sky Quest', island = 'Skylands (Đảo Trên Trời Cũ)', enemy = 'Sky Warrior',   cf = CFrame.new(-1612.32, 368.15, -2202.12)},
+}
+
+local function FindQuest(level)
+    for _, q in ipairs(Quests) do
+        if level >= q.min and level <= q.max then return q end
+    end
+    return nil
+end
+
+local function AcceptQuest(npc, level)
+    if config.TestMode then
+        note('[TEST] Nhận nhiệm vụ: ' .. npc .. ' (cấp ' .. level .. ')')
+        return
+    end
+    local comm = GetCommRemote()
+    if not comm then
+        note('Chưa tìm thấy remote CommF_/CommE trong ReplicatedStorage.Remotes.')
+        return
+    end
+    local ok, err = pcall(function()
+        if comm:IsA('RemoteFunction') then
+            comm:InvokeServer(RemoteConfig.QuestFunction, npc, tostring(level))
+        else
+            comm:FireServer(RemoteConfig.QuestFunction, npc, tostring(level))
+        end
+    end)
+    if not ok then note('Nhận nhiệm vụ lỗi: ' .. tostring(err)) end
+end
+
+-- Tấn công tự động
+local function GetBestCombatTool()
+    local char = GetCharacter()
+    local bp = player:FindFirstChild('Backpack')
+    local candidates = {}
+    local function check(obj)
+        if obj:IsA('Tool') then table.insert(candidates, obj) end
+    end
+    if char then for _, v in ipairs(char:GetChildren()) do check(v) end end
+    if bp then for _, v in ipairs(bp:GetChildren()) do check(v) end end
+    for _, v in ipairs(candidates) do
+        local n = v.Name:lower()
+        if n:find('melee') or n:find('fruit') or n:find('sword') or n:find('katana') then
+            return v
+        end
+    end
+    return candidates[1]
+end
+
+local function EquipTool(tool)
+    local char = GetCharacter()
+    local hum = char and char:FindFirstChildOfClass('Humanoid')
+    if hum and tool then hum:EquipTool(tool) end
+end
+
+local function FindEnemy(enemyName, nearCF)
+    local enemies = Workspace:FindFirstChild('Enemies')
+    local targetFolder = enemies or Workspace
+    if not nearCF then nearCF = CFrame.new(0, 0, 0) end
+    local nearest, nearestDist = nil, math.huge
+    for _, obj in ipairs(targetFolder:GetChildren()) do
+        if obj:IsA('Model') then
+            local hum = obj:FindFirstChildOfClass('Humanoid')
+            local hrp = obj:FindFirstChild('HumanoidRootPart') or obj:FindFirstChildWhichIsA('BasePart')
+            if hum and hrp and hum.Health > 0 then
+                local nameMatch = (enemyName == '' or obj.Name:lower():find(enemyName:lower()))
+                if nameMatch then
+                    local d = (hrp.Position - nearCF.Position).Magnitude
+                    if d < nearestDist then
+                        nearestDist = d
+                        nearest = obj
+                    end
+                end
+            end
+        end
+    end
+    return nearest, nearestDist
+end
+
+local function AttackLoopOnce(enemyName, nearCF)
+    local enemy, dist = FindEnemy(enemyName, nearCF)
+    if not enemy then return false end
+    local hrp = GetHRP()
+    local hum = GetHumanoid()
+    local eHrp = enemy:FindFirstChild('HumanoidRootPart') or enemy:FindFirstChildWhichIsA('BasePart')
+    if not hrp or not hum or not eHrp then return false end
+    if dist > 28 then
+        hrp.CFrame = CFrame.new(eHrp.Position + Vector3.new(0, 6, 0))
+    end
+    local tool = GetBestCombatTool()
+    EquipTool(tool)
+    if tool then tool:Activate() end
+    return true
+end
+
+-- Vòng lặp auto farm (dùng spawn/wait)
+local farmingRunning = false
+local function StartFarmLoop()
+    if farmingRunning then return end
+    farmingRunning = true
+    spawn(function()
+        while alive do
+            if config.AutoFarm then
+                local level = GetLevel()
+                local q = FindQuest(level)
+                if q then
+                    note('Cấp ' .. level .. ' | Nhiệm vụ: ' .. q.npc .. ' | ' .. q.island)
+                    if config.AutoQuest then AcceptQuest(q.npc, math.floor((q.min + q.max) / 2)) end
+                    if config.TeleportOnSelect then TeleportToCF(q.cf) end
+                    if config.AutoKill then AttackLoopOnce(q.enemy or '', q.cf) end
+                else
+                    note('Cấp ' .. level .. ' | Chưa có nhiệm vụ trong bảng (cần cập nhật Quests).')
+                end
+            else
+                note('Auto Farm đang tắt.')
+            end
+            wait(2)
+        end
+        farmingRunning = false
+    end)
+end
+
+spawn(function()
+    while alive do
+        if config.AutoFruit then
+            note('[TEST] Tự nhặt trái đang chạy...')
+        end
+        wait(5)
+    end
+end)
+
+connect(player.Idled, function()
+    if not config.AntiAFK then return end
+    pcall(function()
+        local vu = game:GetService('VirtualUser')
+        vu:CaptureController()
+        vu:ClickButton2(Vector2.new(0, 0))
+    end)
+end)
+
+local hopping = false
+local function HopServer()
+    if hopping then return end
+    hopping = true
+    note('Đang tìm server công khai...')
+    spawn(function()
+        local ok, err = pcall(function()
+            local cursor = ''
+            for page = 1, 5 do
+                local url = ('https://games.roblox.com/v1/games/%s/servers/Public?sortOrder=Asc&limit=100%s'):format(
+                    game.PlaceId, cursor ~= '' and '&cursor=' .. HttpService:UrlEncode(cursor) or '')
+                local data = HttpService:JSONDecode(game:HttpGet(url))
+                for _, server in ipairs(data.data or {}) do
+                    if server.id ~= game.JobId and server.playing < server.maxPlayers then
+                        TeleportService:TeleportToPlaceInstance(game.PlaceId, server.id, player)
+                        note('Đã gửi yêu cầu đổi server.')
+                        return
+                    end
+                end
+                cursor = data.nextPageCursor or ''
+                if cursor == '' then break end
+                wait(0.5)
+            end
+            note('Không tìm được server còn chỗ.')
+        end)
+        if not ok then note('Đổi server thất bại: ' .. tostring(err)) end
+        hopping = false
+    end)
+end
+
+connect(TeleportService.TeleportInitFailed, function(p, _, message)
+    if p == player then
+        hopping = false
+        note('Teleport thất bại: ' .. tostring(message))
+    end
+end)
+
+local function InspectPlayer(p)
+    if not config.WatchAdmins or p == player then return end
+    for _, id in ipairs(config.AdminIds) do
+        if p.UserId == tonumber(id) then
+            note('Gặp user id theo dõi. Đang đổi server...')
+            HopServer()
+            return
+        end
+    end
+end
+connect(Players.PlayerAdded, InspectPlayer)
+spawn(function()
+    while alive do
+        if config.WatchAdmins then
+            for _, p in ipairs(Players:GetPlayers()) do InspectPlayer(p) end
+        end
+        wait(8)
+    end
+end)
+
+connect(player.OnTeleport, function(state)
+    if state ~= Enum.TeleportState.Started or not config.Reload then return end
+    local queue = queue_on_teleport or queueonteleport or (syn and syn.queue_on_teleport)
+    if type(queue) ~= 'function' then
+        note('Không có queue_on_teleport.')
+        return
+    end
+    if not tostring(config.SourceURL):match('^https://') then
+        note('Chưa đặt SourceURL HTTPS.')
+        return
+    end
+    queue(('loadstring(game:HttpGet(%q))()'):format(config.SourceURL))
+end)
+
+-- ===================== BIẾN HIỂN THỊ =====================
+local lvVal, qVal, iVal, farmLog
+
+-- ===================== TRANG AUTO FARM =====================
+do
+    local p = pageAutoFarm
+    sectionLabel(p, 'TỰ ĐỘNG CÀY / CHIẾN ĐẤU', 14, 340)
+    toggleCard(p, 'Bật Auto Farm', 42, 'AutoFarm', 44)
+    toggleCard(p, 'Tự nhận nhiệm vụ theo cấp độ', 92, 'AutoQuest', 44)
+    toggleCard(p, 'Tự dịch chuyển qua đảo khi nhận', 142, 'TeleportOnSelect', 44)
+    toggleCard(p, 'Tấn công quái tự động', 192, 'AutoKill', 44)
+    toggleCard(p, 'Chế độ thử nghiệm (không gọi remote)', 242, 'TestMode', 44)
+
+    farmLog = statusBox(p, 294, 106)
+
+    lvVal = New('TextLabel', {
+        Parent = p,
+        Position = UDim2.new(0, 436, 0, 302),
+        Size = UDim2.new(0, 168, 0, 22),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.GothamBold,
+        Text = 'Cấp: —',
+        TextColor3 = Theme.Text,
+        TextSize = 15,
+        TextXAlignment = Enum.TextXAlignment.Left,
+    })
+    qVal = New('TextLabel', {
+        Parent = p,
+        Position = UDim2.new(0, 436, 0, 330),
+        Size = UDim2.new(0, 168, 0, 22),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.GothamBold,
+        Text = 'Nhiệm vụ: —',
+        TextColor3 = Theme.Text,
+        TextSize = 15,
+        TextXAlignment = Enum.TextXAlignment.Left,
+    })
+    iVal = New('TextLabel', {
+        Parent = p,
+        Position = UDim2.new(0, 436, 0, 358),
+        Size = UDim2.new(0, 168, 0, 22),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.GothamBold,
+        Text = 'Đảo: —',
+        TextColor3 = Theme.Text,
+        TextSize = 15,
+        TextXAlignment = Enum.TextXAlignment.Left,
+    })
+
+    local btnStart = actionButton(p, 'Bắt đầu ngay', 400, 180, 34)
+    connect(btnStart.MouseButton1Click, function()
+        config.AutoFarm = true
+        saveConfig()
+        StartFarmLoop()
+        note('Auto Farm đã bật.')
+    end)
+end
+
+-- ===================== TRANG DỊCH CHUYỂN =====================
+do
+    local p = pageTeleport
+    sectionLabel(p, 'DỊCH CHUYỂN NGANH ĐẢO (3 SEA)', 14, 300)
+
+    local list = New('ScrollingFrame', {
+        Parent = p,
+        Position = UDim2.new(0, 16, 0, 42),
+        Size = UDim2.new(1, -32, 0, 300),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        AutomaticCanvasSize = Enum.AutomaticSize.Y,
+        CanvasSize = UDim2.new(),
+        ScrollBarThickness = 4,
+        ScrollBarImageColor3 = Theme.Border,
+    })
+    local layout = New('UIListLayout', {
+        Parent = list,
+        Padding = UDim.new(0, 6),
+        SortOrder = Enum.SortOrder.LayoutOrder,
+    })
+
+    local function renderSea(seas, index, startY)
+        local y = startY
+        seaSectionLabel(p, 'SEA ' .. index, y, seas[1].color or Theme.Text)
+        y = y + 24
+        for _, island in ipairs(seas) do
+            teleportRow(list, island.name, island.level, island.coords, island.cf, island.color)
+            y = y + 50
+        end
+        return y + 10
+    end
+
+    local y = renderSea(Sea1, 1, 42)
+    y = renderSea(Sea2, 2, y)
+    renderSea(Sea3, 3, y)
+
+    local btnHop = actionButton(p, 'Đổi server cùng Sea', 352, 260, 34)
+    connect(btnHop.MouseButton1Click, HopServer)
+end
+
+-- ===================== TRANG CÀI ĐẶT =====================
+do
+    local p = pageSettings
+    sectionLabel(p, 'CẤU HÌNH HỆ THỐNG', 14, 300)
+    toggleCard(p, 'Anti-AFK (thử nghiệm)', 42, 'AntiAFK', 44)
+    toggleCard(p, 'Theo dõi danh sách admin', 92, 'WatchAdmins', 44)
+    toggleCard(p, 'Tự nạp script sau teleport', 142, 'Reload', 44)
+
+    sectionLabel(p, 'NGUỒN SCRIPT', 200, 200)
+    local srcBox = New('TextBox', {
+        Parent = p,
+        Position = UDim2.new(0, 16, 0, 226),
+        Size = UDim2.new(0, 370, 0, 36),
+        BackgroundColor3 = Theme.SurfaceLight,
+        Text = config.SourceURL,
+        TextColor3 = Theme.Text,
+        PlaceholderText = 'https://.../script.lua',
+        PlaceholderColor3 = Theme.TextMuted,
+        Font = Enum.Font.Gotham,
+        TextSize = 13,
+        BorderSizePixel = 0,
+    })
+    Corner(8, srcBox)
+    Stroke(Theme.Border, 1, srcBox)
+    connect(srcBox.FocusLost, function()
+        config.SourceURL = srcBox.Text
+        saveConfig()
+    end)
+
+    local btnSave = actionButton(p, 'Lưu cấu hình', 276, 160, 34)
+    connect(btnSave.MouseButton1Click, function()
+        saveConfig()
+        note('Đã lưu cấu hình.')
+    end)
+
+    local btnClean = actionButton(p, 'Đóng và dọn menu', 276, 180, 34, Color3.fromRGB(90, 90, 96))
+    connect(btnClean.MouseEnter, function() btnClean.BackgroundColor3 = Color3.fromRGB(110, 110, 116) end)
+    connect(btnClean.MouseLeave, function() btnClean.BackgroundColor3 = Color3.fromRGB(90, 90, 96) end)
+    connect(btnClean.MouseButton1Click, function()
+        if ENV.TraiCayCleanup then ENV.TraiCayCleanup() end
+        alive = false
+        panelHidden = true
+        gui:Destroy()
+    end)
+end
+
+-- ===================== NÚT ĐÓNG / THU GỌN / KÉO CỬA SỔ =====================
+-- Nút × chỉ ẨN panel, không xóa mất menu
+connect(btnClose.MouseButton1Click, function()
+    container.Visible = false
+    backdrop.Visible = false
+    btnMini.Visible = true
+    panelHidden = true
+    note('Menu đã ẩn. Bấm nút MENU để mở lại.')
+end)
+
+-- Nút – thu gọn panel (giống ×)
+connect(btnMin.MouseButton1Click, function()
+    container.Visible = false
+    backdrop.Visible = false
+    btnMini.Visible = true
+    panelHidden = true
+end)
+
+-- Nút MENU flottant mở lại panel
+connect(btnMini.MouseButton1Click, function()
+    container.Visible = true
+    backdrop.Visible = true
+    btnMini.Visible = false
+    panelHidden = false
+    note('Menu đã mở lại.')
+end)
+
+local dragging, dragOrigin, initialPos
+connect(topBar.InputBegan, function(input)
+    if not panelHidden and (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) then
+        dragging = input
+        dragOrigin = input.Position
+        initialPos = container.Position
+    end
+end)
+connect(UserInputService.InputChanged, function(input)
+    if dragging and (input == dragging or input.UserInputType == Enum.UserInputType.MouseMovement) then
+        local d = input.Position - dragOrigin
+        container.Position = UDim2.new(initialPos.X.Scale, initialPos.X.Offset + d.X, initialPos.Y.Scale, initialPos.Y.Offset + d.Y)
+    end
+end)
+connect(UserInputService.InputEnded, function(input)
+    if input == dragging then dragging = nil end
+end)
+
+-- ===================== KHỞI CHẠY =====================
+setTab('AutoFarm')
+saveConfig()
+
+spawn(function()
+    while alive do
+        local lvl = GetLevel()
+        if lvVal then lvVal.Text = 'Cấp: ' .. lvl end
+        local q = FindQuest(lvl)
+        if q then
+            if qVal then qVal.Text = 'Nhiệm vụ: ' .. q.npc end
+            if iVal then iVal.Text = 'Đảo: ' .. q.island end
+        else
+            if qVal then qVal.Text = 'Nhiệm vụ: —' end
+            if iVal then iVal.Text = 'Đảo: —' end
+        end
+        if config.AutoFarm then StartFarmLoop() end
+        wait(2)
+    end
+end)
+
+note('Menu đã sẵn sàng. Tab: Auto Farm | Dịch chuyển | Cài đặt.')
+ENV.TraiCayCleanup = function()
+    alive = false
+    panelHidden = true
+    EnableNoclip(false)
+    for _, c in ipairs(connections) do c:Disconnect() end
+    gui:Destroy()
+end
